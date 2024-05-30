@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Heatmap with Tooltip of Magnetic Field Strength</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+
+  <!-- Flatpickr CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+
+  <!-- Custom CSS -->
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+    #map {
+      height: 80vh; /* Reduced height to accommodate the button */
+      width: 100%;
+    }
+    .datepicker-container {
+      margin-bottom: 10px;
+    }
+    .button-container {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Date picker container -->
+  <div class="datepicker-container">
+    <label for="start-date">Start Date:</label>
+    <input type="text" id="start-date" class="datepicker">
+    <label for="end-date">End Date:</label>
+    <input type="text" id="end-date" class="datepicker">
+  </div>
+
+  <!-- Map container -->
+  <div id="map"></div>
+
+  <!-- Button container -->
+  <div class="button-container">
+    <button id="fetch-after-datetime">Fetch Data After Datetime</button>
+  </div>
+
+  <!-- Leaflet and Flatpickr scripts -->
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="./leaflet-heat.js"></script>
+
+  <script>
+    // Initializing the map with specific latitude and longitude
+    const map = L.map('map').setView([25.096124, 67.5833332], 13); // Coordinates for New York City
+    const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+    const tileURL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+    const tile = L.tileLayer(tileURL, { attribution });
+    tile.addTo(map);
+
+    // Date picker initialization
+    flatpickr(".datepicker", {
+      dateFormat: "Y-m-d", // Date format
+    });
+
+    // Function to create heatmap and markers with filtered data
+    function createHeatmapAndMarkers(addressPoints) {
+      // Creating heatmap
+      const heat = L.heatLayer(addressPoints.map(point => [
+        point.lat,
+        point.lng,
+        point.netField // Use netField for heatmap intensity (adjust as needed)
+      ]), { maxZoom: 13, radius: 25, blur: 15, gradient: { 0.4: 'blue', 0.65: 'lime', 1: 'red' } }).addTo(map);
+
+      // Adding marker and tooltip
+      addressPoints.forEach(point => {
+        const marker = L.marker([point.lat, point.lng]).addTo(map);
+        marker.bindTooltip(`Magnetic Field: ${point.netField} units`);
+      });
+    }
+
+    // Function to fetch CSV data and plot it on the map after a specified datetime
+    function fetchAndPlotDataAfterDatetime(datetime) {
+      // Fetching CSV file asynchronously
+      fetch('output.csv')
+        .then(response => response.text())
+        .then(csv => {
+          // Parsing CSV data
+          const data = Papa.parse(csv, { header: true }).data;
+          // Filter data based on datetime
+          const filteredData = data.filter(point => {
+            const timestamp = new Date(point.TimeStamp); // Assuming the column name is 'Timestamp'
+            return timestamp > datetime;
+          });
+          // Filtering invalid data points
+          const addressPoints = filteredData.filter(point => (
+            !isNaN(point.Latitude) && point.Latitude !== null && point.Latitude !== undefined &&
+            !isNaN(point.Longitude) && point.Longitude !== null && point.Longitude !== undefined
+          )).map(point => ({
+            lat: parseFloat(point.Longitude),
+            lng: parseFloat(point.Latitude),
+            altitude: parseFloat(point.Altitude) || 0, // Set default if missing 
+            magX: parseFloat(point.MagX) || 0,
+            magY: parseFloat(point.MagY) || 0,
+            magZ: parseFloat(point.MagZ) || 0,
+            netField: parseFloat(point.NetField) || 0
+          }));
+          // Check for filtered data points (for debugging)
+          console.log("Valid data points for heatmap after datetime:", addressPoints.length);
+          // Clear existing markers and heatmaps
+          map.eachLayer(layer => {
+            if (layer instanceof L.Marker || layer instanceof L.TileLayer) {
+              map.removeLayer(layer);
+            }
+          });
+          // Create heatmap and markers with filtered data
+          createHeatmapAndMarkers(addressPoints);
+        })
+        .catch(error => {
+          console.error('Error fetching or parsing CSV file:', error);
+        });
+    }
+
+    // Event listener for date picker change
+    document.querySelectorAll('.datepicker').forEach(datepicker => {
+      datepicker.addEventListener('change', () => {
+        const startDate = new Date(document.getElementById('start-date').value);
+        const endDate = new Date(document.getElementById('end-date').value);
+        fetchAndPlotData(startDate, endDate);
+      });
+    });
+
+    // Event listener for button click to fetch data after a specified datetime
+    document.getElementById('fetch-after-datetime').addEventListener('click', () => {
+      const datetimeString = prompt('Enter datetime (YYYY-MM-DD HH:mm:ss):');
+      if (datetimeString) {
+        const datetime = new Date(datetimeString);
+        if (!isNaN(datetime.getTime())) {
+          fetchAndPlotDataAfterDatetime(datetime);
+        } else {
+          alert('Invalid datetime format. Please enter datetime in YYYY-MM-DD HH:mm:ss format.');
+        }
+      }
+    });
+
+    // Function to fetch CSV data and plot it on the map
+    function fetchAndPlotData(startDate, endDate) {
+      // Fetching CSV file asynchronously
+      fetch('output.csv')
+        .then(response => response.text())
+        .then(csv => {
+          // Parsing CSV data
+          const data = Papa.parse(csv, { header: true }).data;
+          // Filter data based on time range
+          const filteredData = data.filter(point => {
+            const timestamp = new Date(point.TimeStamp); // Assuming the column name is 'Timestamp'
+            return timestamp >= startDate && timestamp <= endDate;
+          });
+          // Filtering invalid data points
+          const addressPoints = filteredData.filter(point => (
+            !isNaN(point.Latitude) && point.Latitude !== null && point.Latitude !== undefined &&
+            !isNaN(point.Longitude) && point.Longitude !== null && point.Longitude !== undefined
+          )).map(point => ({
+            lat: parseFloat(point.Longitude),
+            lng: parseFloat(point.Latitude),
+            altitude: parseFloat(point.Altitude) || 0, // Set default if missing 
+            magX: parseFloat(point.MagX) || 0,
+            magY: parseFloat(point.MagY) || 0,
+            magZ: parseFloat(point.MagZ) || 0,
+            netField: parseFloat(point.NetField) || 0
+          }));
+          // Check for filtered data points (for debugging)
+          console.log("Valid data points for heatmap:", addressPoints.length);
+          // Clear existing markers and heatmaps
+          map.eachLayer(layer => {
+            if (layer instanceof L.Marker || layer instanceof L.TileLayer) {
+              map.removeLayer(layer);
+            }
+          });
+          // Create heatmap and markers with filtered data
+          createHeatmapAndMarkers(addressPoints);
+        })
+        .catch(error => {
+          console.error('Error fetching or parsing CSV file:', error);
+        });
+    }
+
+    // Initial fetch and plot of data with full date range
+    fetchAndPlotData(new Date('2000-01-01'), new Date()); // Change the start date as needed
+  </script>
+</body>
+</html>
